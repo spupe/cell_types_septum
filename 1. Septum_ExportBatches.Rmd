@@ -1,0 +1,113 @@
+---
+title: "Septum_ExportBatches"
+---
+##### Medial Septum sequencing project 
+##### Combine raw data files, filter ERCCs, export them to .csv count table
+##### Script by Stefano Pupe
+
+```{r}
+
+#Sequencing was done in two separate batches. The first was previously compiled into a single .txt file, and the second was provided in six different .csv files. We need to merge those six files, filter both batches for ERCC, and export the combined counts for each batch separately, so that we have two files that will be used for further analysis. We will also add cell names as the ones provided are not informative
+
+library(Seurat)
+library(ggplot2)
+library(cowplot)
+
+setwd("A:/Science/SeptumPaper") 
+savelocation <- "A:/Science/SeptumPaper" 
+
+#Set the name for each batch, will be used for generating cell and file names
+
+namebatch1 <- "MS_Batch1"
+namebatch2 <- "MS_Batch2"
+
+#Batch 1 needs cell names, ERCC filter and export to .csv
+
+sc <- read.table('Batch1.txt',sep='\t', row.names = 1)
+
+scSeurat <- CreateSeuratObject(sc)
+
+namelist_batch1 <- list()
+
+for (i in 2:length(colnames(scSeurat))) {
+  
+    namestring <- paste(namebatch1,"_Cell_",i-1,sep="")
+    namelist_batch1[i] <- namestring
+   
+}
+
+scSeurat<-RenameCells(scSeurat,new.names=as.character(namelist_batch1))
+
+rawcount_batch1 <- as.matrix(GetAssayData(object = scSeurat, slot = "counts"))
+ercc_batch1 <- grep("ERCC-",rownames(scSeurat))
+filtercount_batch1 <- rawcount_batch1[-ercc_batch1,]
+
+savestring <- paste(savelocation,namebatch1,"_Final.csv",sep="")
+
+write.table(filtercount_batch1, 
+            savestring, 
+            sep = ',', row.names = T, col.names = T, quote = F)
+
+#Batch 2 is more complicated as it needs to be merged first
+
+sc1 <- read.csv('septum7.csv',sep=',', header=TRUE, row.names = 1) 
+sc2 <- read.csv('septum8.csv',sep=',', header=TRUE, row.names = 1) 
+sc3 <- read.csv('septum9.csv',sep=',', header=TRUE, row.names = 1) 
+sc4 <- read.csv('septum10.csv',sep=',', header=TRUE, row.names = 1) 
+sc5 <- read.csv('septum11.csv',sep=',', header=TRUE, row.names = 1) 
+sc6 <- read.csv('septum12.csv',sep=',', header=TRUE, row.names = 1) 
+
+scSeurat1 <- CreateSeuratObject(sc1)
+scSeurat2 <- CreateSeuratObject(sc2)
+scSeurat3 <- CreateSeuratObject(sc3)
+scSeurat4 <- CreateSeuratObject(sc4)
+scSeurat5 <- CreateSeuratObject(sc5)
+scSeurat6 <- CreateSeuratObject(sc6)
+
+seurat.combined <- merge(x=scSeurat1, y = scSeurat2)
+seurat.combined <- merge(x=seurat.combined, y = scSeurat3)
+seurat.combined <- merge(x=seurat.combined, y = scSeurat4)
+seurat.combined <- merge(x=seurat.combined, y = scSeurat5)
+seurat.combined <- merge(x=seurat.combined, y = scSeurat6)
+
+namelist_batch2 <- list()
+
+for (i in 2:length(colnames(seurat.combined))) {
+  
+    namestring <- paste(namebatch2,"_Cell_",i-1,sep="")
+    namelist_batch2[i] <- namestring
+   
+}
+
+scSeurat<-RenameCells(seurat.combined,new.names=as.character(namelist_batch2))
+
+rawcount_batch2 <- as.matrix(GetAssayData(object = seurat.combined, slot = "counts"))
+ercc_batch2 <- grep("ERCC-",rownames(seurat.combined))
+filtercount_batch2 <- rawcount_batch2[-ercc_batch2,]
+
+savestring <- paste(savelocation,namebatch2,"_Final.csv",sep="")
+
+write.table(filtercount_batch2, 
+            savestring, 
+            sep = ',', row.names = T, col.names = T, quote = F)
+
+```
+
+```{r}
+#In case there is interest, we can also output the count tables with ERCCs
+
+savestring <- paste(savelocation,namebatch1,"_ERCC.csv",sep="")
+
+write.table(rawcount_batch1, 
+            savestring, 
+            sep = ',', row.names = T, col.names = T, quote = F)
+
+savestring <- paste(savelocation,namebatch2,"_ERCC.csv",sep="")
+
+write.table(rawcount_batch2, 
+            savestring,   
+            sep = ',', row.names = T, col.names = T, quote = F)
+
+```
+
+

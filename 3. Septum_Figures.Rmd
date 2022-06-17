@@ -1,0 +1,562 @@
+---
+title: "Septum_Figures"
+---
+##### Medial Septum sequencing project 
+##### Script by Stefano Pupe
+
+
+```{r}
+# Load required libraries, necessary functions, marker lists
+
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+library(viridis)
+library(cowplot)
+library(dittoSeq)
+library(waffle)
+library(RColorBrewer)
+library(ktplots)
+library(clustree)
+library(ranger)
+library(GGally)
+library(Cairo)
+options(device="CairoWin")
+library(plyr)
+library(ggpubr)
+library(treemap)
+library(plotly)
+
+# Run Septum_IntegrateBatches first to obtain these three objects
+seuratObj <- septum.integrated 
+seuratObj_heatmap <- septum.integrated.heatmap 
+seuratObj_abbreviated <- septum.integrated.abbreviated
+
+setwd("A:/Science/SeptumPaper") 
+savelocation <- "A:/Science/SeptumPaper/" 
+
+clustercolors<-c("#91bfdb",  "#BCFFB2FF","#8AE67EFF", "#60CC52FF", "#3CB22DFF", "#1F990FFF",  "#F4D166FF", "#fc8d59","#F15A22")
+
+vlnplotwidth <- 10  #in cm, for ggplot2;height is variable according to number of genes
+wafflewidth <- 10
+waffleheight <- 10
+dendrowidth <- 60
+dendroheight <- 60
+
+source("Septum_Functions.R") #this calls up the necessary functions for the figures
+source("Septum_MarkerList.R") #list of markers, too big to write up here
+
+```
+
+
+##### FIGURE 1 - UMAP, CLUSTERS
+
+```{r}
+#Panel B: heatmap with top markers
+
+# Seurat's heatmap function is ugly, and pheatmap is better; dittoHeatmap from dittoseq is a front-end between these two. However, it is finnicky and needs adjustments so that cells are arranged according to clusters, and there is some smooth spacing between them 
+
+# Prep variables
+
+filename <- "PanelB_Heatmap.tiff"
+savestring <- paste(savelocation,"Figures/Figure1/",filename,sep="") 
+markerstouse <- markers_general_commonmarkers
+markerstouse <- markerstouse[-1] #the first item in a marker list is a title, we don't want that
+
+markers_heatmap <- append(markerstouse,markers_general_neurotransmittershort) #in heatmaps we want to have the neurotransmitter markers on the bottom, to denote the identity of each cell cluster; this adds it to the plot, no matter which marker list we use
+vertgap <- length(markers_heatmap)-length(markers_general_neurotransmittershort) 
+heatmapwidth <- 35
+heatmapheight <- 15
+group_order <- levels(seuratObj_heatmap)
+clusters_cellnames <- list()
+gap_length <- list()
+
+# Get cluster order, use that to identify how many cells before a white bar (gap), pass that into metadata so it can be used
+
+for (i in 1:length(group_order)){ 
+  
+clusters_cellnames[[i]] <- WhichCells(seuratObj_heatmap, ident = sort(group_order)[i])
+
+}
+
+for (i in 1:length(clusters_cellnames)){ 
+  
+gap_length[i] <- length(clusters_cellnames[[i]])
+
+}
+
+horizgap <- unlist(gap_length)
+for (i in 2:length(horizgap)){ 
+  
+horizgap[i] <- horizgap[i] + horizgap[i-1]
+
+}
+
+for (i in 1:length(seuratObj_heatmap@meta.data$orig.ident)){ 
+  
+seuratObj_heatmap@meta.data$group[i] <- as.character(seuratObj_heatmap@active.ident[[i]])
+
+}
+
+gaplist <- unlist(gap_length)
+
+
+toplot <- dittoHeatmap(seuratObj_heatmap, 
+    genes = markers_heatmap,
+    order.by="group", 
+    annot.by="group",
+    annot.colors=clustercolors,
+    assay="RNA",
+    slot="data",
+    scaled.to.max = FALSE,
+    cluster_rows=FALSE,
+    cluster_cols=FALSE,
+    treeheight_row = 0,
+    treeheight_col=0,
+    cellwidth=0.5,
+    cellheight=10,
+    gaps_col=horizgap,
+    gaps_row=vertgap,
+    show_colnames=FALSE,
+    show_rownames=TRUE,
+    legend=FALSE,
+    heatmap.colors=colorRampPalette(c("blue", "white", "red"))(10)
+    )
+
+ggsave(toplot,filename=savestring,dpi=600,type='cairo',width=heatmapwidth,height=heatmapheight,units='cm',limitsize=FALSE)
+
+```
+
+```{r}
+# Panel C: Violin plot, neurotransmitter markers
+
+filename <- "PanelC_ViolinPlotMarkers.tiff"
+savestring <- paste(savelocation,"Figures/Figure1/",filename,sep="")
+markerstouse <- markers_general_neurotransmittermarkers 
+
+toplot <- suppressMessages(StackedVlnPlot(obj = seuratObj_abbreviated, features = markerstouse,cols=clustercolors, assay="RNA")) #the reason we have to use suppress messages is that without it, ggplot2 complains about changing 'y' scale for every plot being produced by StackedvlnPlot 
+vlnplotheight <- 1 + length(markerstouse)
+ggsave(toplot,filename=savestring,dpi=600,type='cairo',width=vlnplotwidth,height=vlnplotheight,units='cm',limitsize=FALSE)
+toplot
+
+```
+
+```{r}
+# Panel D: UMAP, TSNE clustering
+
+filename_umap <- "PanelD_UMAP.tiff"
+filename_tsne <- "PanelD_TSNE.tiff"
+savestring_umap <- paste(savelocation,"Figures/Figure1/",filename_umap,sep="")
+savestring_tsne <- paste(savelocation,"Figures/Figure1/",filename_tsne,sep="")
+UMAPwidth <- 25
+UMAPheight <- 20
+TSNEwidth <- 25
+TSNEheight <- 20
+
+toplot <- DimPlot(object = seuratObj, reduction = "umap", group.by = "ident", 
+   cols=clustercolors,pt.size=2,label=TRUE,label.box=TRUE,label.size=6) 
+ggsave(toplot,filename=savestring_umap,dpi=600,type='cairo',width=UMAPwidth,height=UMAPheight,units='cm',limitsize=FALSE)
+toplot
+
+filename <- "C:/SeptumPaper/Figures/Figure1/TSNE.tiff"
+toplot <- DimPlot(object = seuratObj, reduction = "tsne", group.by = "ident", 
+   cols=clustercolors,pt.size=1.5) 
+
+ggsave(toplot,filename=savestring_tsne,dpi=600,type='cairo',width=TSNEwidth,height=TSNEheight,units='cm',limitsize=FALSE)
+toplot
+
+
+```
+
+##### FIGURE 2 - VIOLIN PLOT MARKERS, RECEPTORS
+
+```{r}
+# Panel A: Violin Plot with top markers
+
+filename <- "PanelA_ViolinPlotMarkers.tiff"
+savestring <- paste(savelocation,"Figures/Figure2/",filename,sep="")
+markerstouse <- markers
+
+vlnplotheight <-  1 + length(markerstouse)
+toplot <- suppressMessages(StackedVlnPlot(obj = seuratObj_abbreviated,features = markerstouse,cols=clustercolors,assay="RNA"))
+ggsave(toplot,filename=savestring,dpi=600,type='cairo',width=vlnplotwidth,height=vlnplotheight,units='cm',limitsize=FALSE)
+toplot
+
+```
+
+```{r}
+# Alternative panel A: figure divided in two
+
+filename_part1 <- "PanelA_ViolinPlotMarkers_Divided_1.tiff"
+savestring_part1 <- paste(savelocation,"Figures/Figure2/",filename_part1,sep="")
+
+filename_part2 <- "PanelA_ViolinPlotMarkers_Divided_2.tiff"
+savestring_part2 <- paste(savelocation,"Figures/Figure2/",filename_part2,sep="")
+
+markerstouse <- markers_general_neurotransmittermarkers
+
+markerstouse <- markerstouse[-1]
+markersrev <- markerstouse
+markers_divided1 <- list()
+markers_divided2 <- list()
+vlnplotheight <- 1 + length(markerstouse)
+beginning <- 1 #this seems redundant but some marker lists (ie for receptors) don't have gene names in beginning
+middle <- length(markerstouse)/2  #with these three variables we can determine how we want to split; in this case, right in the middle of the marker list
+end <- length(markerstouse)
+
+for (i in beginning:middle){ 
+  
+markers_divided1[i] <- markersrev[i] 
+
+}
+
+i <- 1
+middle <- middle + 1 
+
+for (j in middle:end){ 
+  
+markers_divided2[i] <- markersrev[j] 
+i <- i + 1 
+
+}
+
+p1<-suppressMessages(StackedVlnPlot(obj = seuratObj_abbreviated, features = as.character(markers_divided1),cols=clustercolors, assay="RNA"))
+p2<-suppressMessages(StackedVlnPlot(obj = seuratObj_abbreviated, features = markers_divided2,cols=clustercolors, assay="RNA"))
+vlnplotheight <- 1 + length(markers_divided1)
+toplot<-p1
+ggsave(toplot,filename=savestring_part1,dpi=600,type='cairo',width=vlnplotwidth,height=vlnplotheight,units='cm',limitsize=FALSE)
+toplot
+
+vlnplotheight <- 1 + length(markers_divided2)
+toplot<-p2
+ggsave(toplot,filename=savestring_part2,dpi=600,type='cairo',width=vlnplotwidth,height=vlnplotheight,units='cm',limitsize=FALSE)
+toplot
+
+```
+
+
+```{r}
+# Panel B: receptors
+
+filename <- "PanelB_ViolinPlotReceptors.tiff"
+savestring <- paste(savelocation,"Figures/Figure2/",filename,sep="")
+markerstouse <- markers_list_receptors
+
+toplot<-suppressMessages(StackedVlnPlot(obj = seuratObj, features = markers,cols=clustercolors, assay="RNA"))
+ggsave(toplot,filename=savestring,dpi=600,type='cairo',width=vlnplotwidth,height=vlnplotheight,units='cm',limitsize=FALSE)
+toplot
+
+```
+
+##### FIGURE 3 - GLUTAMATERGIC POPULATION
+
+```{r}
+# Panel A: Violin plot 
+
+filename <- "PanelA_ViolinPlotMarkers.tiff"
+savestring <- paste(savelocation,"Figures/Figure3/",filename,sep="")
+markerstouse <- c("Slc17a6","Cacna2d1","Gad2","Slc32a1") 
+
+toplot <- suppressMessages(StackedVlnPlot(obj = seuratObj_abbreviated, features = markerstouse,cols=clustercolors, assay="RNA"))
+ggsave(toplot,filename=savestring,dpi=600,type='cairo',width=vlnplotwidth,height=vlnplotheight,units='cm',limitsize=FALSE)
+toplot
+
+```
+
+```{r}
+# Panel C: plot the proportions
+
+# This figure relies on pre-processed data in other workflows (analysis of ISH results in CellProfiler), so the values to be used by the "proportion" variables have to be manually input. They must add up to 100
+
+filename <- "PanelC_Proportions_ViolinPlotMarkers.tiff"
+savestring <- paste(savelocation,"Figures/Figure3/",filename,sep="")
+#glutISH <- read.csv('glutISH.csv',sep=',', header=TRUE, row.names = 1)  
+proportion1_Cacna2d1 <- 36 #glutISH[1]
+proportion1_Vglut2 <- 64 #glutISH[2]
+proportion2_Gad2 <- 74 #glutISH[3]
+proportion2_Vglut2 <- 26 #glutISH[4]
+proportion3_Gad2 <- 95 #glutISH[5]
+proportion3_Vglut2 <- 5 #glutISH[6]
+
+p1 <- waffle(c(proportion1_Cacna2d1,proportion1_Vglut2), rows = 10, colors=c(clustercolors[1], "grey90"), size=0.7, legend_pos="none")
+p2 <- waffle(c(proportion2_Gad2,proportion2_Vglut2), rows = 10, colors=c(clustercolors[1], "grey90"), size=0.7, legend_pos="none")
+p3 <- waffle(c(proportion3_Gad2,proportion3_Vglut2), rows = 10, colors=c(clustercolors[1], "grey90"), size=0.7, legend_pos="none")
+
+toplot <- plot_grid(p1,p2,p3)
+ggsave(toplot,filename=savestring,dpi=600,type='cairo',width=wafflewidth,height=waffleheight,units='cm',limitsize=FALSE)
+toplot
+
+```
+
+##### FIGURE 4 - GABAERGIC POPULATION
+
+```{r}
+# Panel A: Violin plot 
+
+filename <- "PanelA_ViolinPlot.tiff"
+savestring <- paste(savelocation,"Figures/Figure4/",filename,sep="")
+markerstouse <- c("Syt2","Npr3","Erbb4","Kcnh1","Arpp21","Slc32a1")
+vlnplotheight <- 1 + length(markerstouse)
+
+toplot <- suppressMessages(StackedVlnPlot(obj = seuratObj_abbreviated, features = markers,cols=clustercolors, assay="RNA"))
+
+ggsave(toplot,filename=savestring,dpi=600,type='cairo',width=vlnplotwidth,height=vlnplotheight,units='cm',limitsize=FALSE)
+toplot
+
+```
+
+```{r}
+#panel C: Proportions
+
+# This figure relies on pre-processed data in other workflows, see note in Figure 3
+
+filename <- "PanelC_Proportions_ViolinPlotMarkers.tiff"
+savestring <- paste(savelocation,"Figures/Figure4/",filename,sep="")
+#gabaISH <- read.csv('gabaISH.csv',sep=',', header=TRUE, row.names = 1)  
+proportion1_Syt2 <- 13 #gabaISH[1]
+proportion1_Npr3 <- 66 #gabaISH[2]
+proportion1_Vgat <- 21 #gabaISH[3]
+proportion2_Syt2 <- 80 #gabaISH[4]
+proportion2_Vgat <- 20 # gabaISH[5]
+proportion3_Npr3 <- 92 #gabaISH[6]
+proportion3_Vgat <- 8 #gabaISH[7]
+
+p1 <- waffle(c(proportion1_Syt2,proportion1_Npr3,proportion1_Vgat), rows = 10, colors=c(clustercolors[2],clustercolors[3], "grey90"), size=0.7, legend_pos="none")
+p2 <- waffle(c(proportion2_Syt2,proportion2_Vgat), rows = 10, colors=c(clustercolors[2], "grey90"), size=0.7, legend_pos="none")
+p3 <- waffle(c(proportion3_Npr3,proportion3_Vgat), rows = 10, colors=c(clustercolors[3], "grey90"), size=0.7, legend_pos="none")
+
+toplot <- plot_grid(p1,p2,p3)
+ggsave(toplot,filename=savestring,dpi=600,type='cairo',width=wafflewidth,height=waffleheight,units='cm',limitsize=FALSE)
+toplot
+
+
+```
+
+##### FIGURE 5 - SPATIAL TRANSCRIPTOMICS
+
+```{r}
+# Multiplex ISH validation data
+
+filename <- "MultiplexISH_Validation.tiff"
+savestring <- paste(savelocation,"Figures/Figure5/",filename,sep="")
+
+multiplex1 <- read.csv('Well1_results.txt',sep='\t', header=FALSE) #This is data derived from the spatial transcriptomics dataset; Wells 1 and 4 come from different animals, so we are using them to compare the stability of genetic expression
+multiplex2 <- read.csv('c:/SeptumPaper/Well4_results.txt',sep='\t', header=FALSE) 
+multiplex1_counts <- sapply(multiplex1,table)
+multiplex1_counts <- multiplex1_counts$V4 #we are only interested in the total count for this analysis
+multiplex1_counts <- as.data.frame(multiplex1_counts)[-c(46), ] #Remove Rspo4 as it had no expression
+multiplex2_counts <- sapply(multiplex2,table)
+multiplex2_counts <- multiplex2_counts$V4
+multiplex2_counts <- as.data.frame(multiplex2_counts)[-c(46), ] 
+multiplex2_counts <- as.data.frame(multiplex2_counts)[-c(46), ] #Remove Rxfp3 too as it had no expr in Well 1
+
+# Another comparison we are interested in is to compare the expression between two sides of the same slice
+multiplex2_orderedbyheight <- arrange(multiplex2,V1,desc(V1))
+multiplex2_halfhalf_counts_top <- head(multiplex2_orderedbyheight,length(multiplex2_orderedbyheight$V1)/2)
+multiplex2_halfhalf_counts_top <- sapply(multiplex2_halfhalf_counts_top,table)
+multiplex2_halfhalf_counts_top <- multiplex2_halfhalf_counts_top$V4
+multiplex2_halfhalf_counts_bottom <- tail(multiplex2_orderedbyheight,length(multiplex2_orderedbyheight$V1)/2)
+multiplex2_halfhalf_counts_bottom <- sapply(multiplex2_halfhalf_counts_bottom,table)
+multiplex2_halfhalf_counts_bottom <- multiplex2_halfhalf_counts_bottom$V4
+
+multiplex3 <- data.frame(multiplex1_counts,multiplex2_counts) #multiplex3 combines the vars for the first analysis, multiplex4 for the second
+multiplex4 <- data.frame(multiplex2_halfhalf_counts_top,multiplex2_halfhalf_counts_bottom)
+multiplex4 <- multiplex4[-c(46), ] #Rspo4 exclusion again
+
+ggscatter(multiplex3,x="Freq",y="Freq.1",add="reg.line",conf.int=TRUE) + stat_cor(method = "pearson", label.x = 3, label.y = 150000)
+
+#plot correlation (log-corrected) between same region in diff animals
+p1 <- ggplot(multiplex3,aes(x=Freq,y=Freq.1)) +geom_point() + geom_text(label=multiplex3$Var1,size=3,nudge_y=0,check_overlap = T) +geom_smooth(method="lm", se=TRUE, fullrange=FALSE, level=0.95)+ scale_x_continuous(trans = 'log10') + 
+  scale_y_continuous(trans = 'log10') +  stat_cor(method = "pearson", label.x = 1, label.y = 5) + theme_light() + theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()) 
+
+#plot correlation (log-corrected) between two sides of the septum, in same animal
+p2 <- ggplot(multiplex4,aes(x=Freq,y=Freq.1)) +geom_point() + geom_text(label=multiplex4$Var1,size=3,nudge_y=0.05,check_overlap = T) +geom_smooth(method="lm", se=TRUE, fullrange=FALSE, level=0.95)+ scale_x_continuous(trans = 'log10') + 
+  scale_y_continuous(trans = 'log10') +  stat_cor(method = "pearson", label.x = 3, label.y = 5) +  theme_light() + theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()) 
+
+toplot <- plot_grid(p1,p2)
+
+ggsave(toplot,filename=savestring,dpi=600,type='cairo',width=wafflewidth,height=waffleheight,units='cm',limitsize=FALSE)
+toplot
+
+
+```
+
+
+##### FIGURE 6 - DIAGRAM
+
+```{r pressure, echo=FALSE}
+# This figure is a diagram to display the proportion of each cell type according to the dataset (spatial or scRNA-seq)
+# It plots a treemap plot, which is essentially a fancy waffle chart
+
+filename <- "Diagram.tiff"
+savestring <- paste(savelocation,"Figures/Figure6/",filename,sep="")
+
+group <- c("Glutamate","Gaba","Gaba","Gaba","Gaba","Gaba","Chat","Chat","Chat")
+#subgroup <- paste("subgroup" , c(1,1,2,3,4,5,1,2,3), sep="-")
+subgroup <- c("Glut","Gaba1","Gaba2","Gaba3","Gaba4","Gaba5","Chat1","Chat2","Chat3")
+#value <- c(18,5,25,23,14,3,6,2,4) #this is for multiplex ISH (as of Nov/20)
+value <- c(6,3,13,16,11,8,6,21,16) #this is for RNAseq proportions
+data <- data.frame(group,subgroup,value,clustercolors)
+
+#tiff(savestring,width=2000,height=1500, res = 600) 
+
+treemap(data,
+            index=c("group","subgroup"),
+            vSize="value",
+            palette=clustercolors,
+            vColor="clustercolors",
+            type="color",
+            border.col=c("black","white"),
+            mirror.x='FALSE',
+            mirror.y='TRUE',
+            fontsize.labels=8,
+            drop.unused.levels = TRUE,
+            algorithm="squarified"
+            ) 
+
+parents <- c("Glutamate","Gaba","","","","","Chat","","")
+#subgroup <- paste("subgroup" , c(1,1,2,3,4,5,1,2,3), sep="-")
+labels <- c("Glut","Gaba1","Gaba2","Gaba3","Gaba4","Gaba5","Chat1","Chat2","Chat3")
+#values <- c(10,15,10,10,5,10,12,18,10)
+data <- data.frame(group,subgroup,value)
+ 
+toplot <- plot_ly(data,
+  type="treemap",
+  labels=labels,
+  parents=parents,
+  values=values,
+  marker=list(colorscale='Reds'))
+
+toplot
+
+```
+
+
+#### FIGURE S1 - BATCH COMPARISONS
+
+```{r}
+# Compare UMAP plots, count and gene number for each scRNAseq batch
+
+filename <- "Batch_Comparisons.tiff"
+savestring <- paste(savelocation,"Figures/FigureS1/",filename,sep="")
+
+p1 <- DimPlot(object = seuratObj, reduction = "umap", group.by = "batch",#cols=c("#ca0020","#0571b0"))
+             cols=c("#fc8d59","#91bfdb")) 
+p2 <- VlnPlot(seuratObj_abbreviated,"nCount_RNA",split.by="batch",cols=c("#fc8d59","#91bfdb"),pt.size=0.25) + theme(legend.position = "none") 
+p3 <- VlnPlot(seuratObj_abbreviated,"nFeature_RNA",split.by="batch",cols=c("#fc8d59","#91bfdb"),pt.size=0.25)  + theme(legend.position = "none")
+
+toplot <- plot_grid(p1, p2,p3,rows=1)
+
+ggsave(toplot,filename=savestring,dpi=600,type='cairo',width=30,height=10,units='cm',limitsize=FALSE)
+toplot
+
+```
+
+#### FIGURE S2 - CLUSTERING
+```{r pressure, echo=FALSE}
+# Panel A: Make dendrograms at different resolution levels
+
+filename <- "Dendrograms.tiff"
+savestring <- paste(savelocation,"Figures/FigureS2/",filename,sep="")
+resolutions <- c(0.1,0.5,1,1.5,2,2.5)
+
+
+seuratObj_clustering <- seuratObj # we will change properties of the object itself; while this is already a copy, it will garble other figures if we don't contain it
+
+for (i in 1:length(resolutions)) {
+  
+seuratObj_clustering <-FindClusters(object = seuratObj_clustering, verbose = FALSE,group.singletons=FALSE,n.start=100,n.iter=100,resolution=i)
+
+}
+
+p1 <- clustree(seuratObj_clustering, node_colour = "Gad1", node_colour_aggr = "mean")
+p2 <- clustree(seuratObj_clustering, node_colour = "Slc17a6", node_colour_aggr = "mean")
+p3 <- clustree(seuratObj_clustering, node_colour = "Chat", node_colour_aggr = "mean")
+toplot <- plot_grid(p1,p2,p3)
+
+ggsave(toplot,filename=savestring,dpi=600,type='cairo',width=dendrowidth,height=dendroheight,units='cm',limitsize=FALSE)
+toplot
+
+```
+
+```{r}
+# Panel B: Calculate oob error for current level of clustering
+
+filename <- "Error.tiff"
+savestring <- paste(savelocation,"Figures/FigureS2/",filename,sep="")
+
+splitMatrix <- matrix(nrow=length(levels(seuratObj)),ncol=length(levels(seuratObj)))
+
+for (i in 1:length(levels(seuratObj))) {
+    
+    for (j in 1:length(levels(seuratObj))) {
+        
+        tempresult <- AssessSplit(seuratObj,cluster1=levels(seuratObj)[i],cluster2=levels(seuratObj)[j],print.output=FALSE)
+        splitMatrix[i,j] <- tempresult$prediction.error
+        
+    }
+    
+}
+
+rownames(splitMatrix) <- levels(seuratObj)
+colnames(splitMatrix) <- levels(seuratObj)
+
+# Build a correlogram showing oob error for each cluster pair
+
+splitMatrix_temp <- splitMatrix + 0.000001 #we add a tiny value so that squares with 0 appear in the plot
+colnames(splitMatrix_temp)<-levels(Idents(seuratObj_abbreviated))
+rownames(splitMatrix_temp)<-levels(Idents(seuratObj_abbreviated))
+
+#tiff(file="C:/SeptumPaper/Figures/FigureS2/Cluster_CorrelationMatrix.tiff",width=3000,height=3000, res = 600)
+
+toplot <- ggcorr(data=NULL,label=TRUE,cor_matrix=splitMatrix_temp,label_round=2,limits=c(0,0.2),angle=-45)
+
+ggsave(toplot,filename=savestring,dpi=600,type='cairo',width=dendrowidth,height=dendroheight,units='cm',limitsize=FALSE)
+toplot
+
+```
+```{r}
+# Panel C: Run a random forest classifier with a progressively increasing training set
+
+filename <- "RFClassifier.tiff"
+savestring <- paste(savelocation,"Figures/FigureS2/",filename,sep="")
+
+tiff(savestring,width=2000,height=1500, res = 600)
+toplot <- rfClassify(septum.integrated)
+
+```
+
+#### Figure S3: Markers, receptors and channels
+
+```{r}
+# Run this to output StackedVlnPlot for markers of every category, also outputs a .txt reporting which genes were not found
+
+counter <- 1
+
+for (i in 1:length(markers_list_full[[1]])) {
+  
+        for (j in 1:length(markers_list_full[[i]])) {
+
+                  counter <- counter+1
+        markerstouse <- checkGenes(seuratObj_abbreviated,markers_list_full[[i]][[j]])
+        markerstoprint <- markerstouse[[2]]
+        markerstouse <- markerstouse[[1]]
+        vlnplotheight <- 1 + length(markerstouse)
+        filenametext <- paste0("C:/SeptumPaper/Figures/FigureS3/" , markerstoprint[1] , "_NotFound.txt")
+        filenameplot <- paste0("C:/SeptumPaper/Figures/FigureS3/" , markerstoprint[1], ".tiff")
+        print(paste0("Now saving iteration number: ", counter))
+        toplot<- suppressMessages(StackedVlnPlot(obj = seuratObj_abbreviated, features = markerstouse,cols=clustercolors, assay="RNA"))
+        write.table(markerstoprint, file = filenametext, sep = " ",row.names = FALSE)
+        ggsave(toplot,filename=filenameplot,dpi=600,type='cairo',width=vlnplotwidth,height=vlnplotheight,units='cm',limitsize=FALSE)
+        }
+}
+
+
+```
+
+
+

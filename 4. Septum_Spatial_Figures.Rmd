@@ -1,0 +1,216 @@
+---
+title: "Septum_Spatial_Figures"
+editor_options: 
+  chunk_output_type: console
+---
+##### Medial Septum sequencing project 
+##### Analyze and visualize data from spatial transcriptomics
+##### Script by Stefano Pupe
+
+
+```{r }
+library(readxl)
+library(rsvg)
+library(knitr) 
+library(tidyverse)
+library(magick)
+library(RColorBrewer)
+library(imager)
+library(ggplot2)
+library(ggpubr)
+library(jpeg)
+library(cowplot)
+library(gridExtra)
+library(plotly)
+library(treemap)
+
+clustercolors<-c("#91bfdb",  "#BCFFB2FF","#8AE67EFF", "#60CC52FF", "#3CB22DFF", "#1F990FFF",  "#F4D166FF", "#fc8d59","#F15A22")
+```
+
+```{r}
+#### CONFIGURATION 
+
+setwd("A:/Science/SeptumPaper/")
+basefilename <- "QIAGEN_Well4_Curated.xlsx" # This is a count table structured as gene names in rows and individual cells in columns, very similar to scRNA-seq tables. 
+basefigure <- 'Capture_Well4.png' # The image from the same well as the data
+# Introduce a gene list, followed by an integer that determines whether you expect it to be low-, medium- or high-expressing (1,2 or 3, respectively). The rationale is that low-expressing genes are rarer and thus harder to detect, needing a lower threshold, while the opposite is true for high-expressing genes. Threshold values are arbitrary because they depend on each dataset, you can set them below.
+genelist = list(c("Slc32a1",3),c("Slc17a6",3),c("Chat",2),c("Arpp21",2),c("Npr3",2),c("Syt2",2),c("Erbb4",2),c("Kcnh1",2),c("Nes",2),c("Slc17a8",1),c("Amigo2",2),c("Ctxn3",2))
+low_threshold = 1
+medium_threshold = 3
+high_threshold = 8
+# Describe which gene interactions are of interest to represent cell types, since often two or three markers are necessary to define them. The first argument is the name of the cell type, followed by gene names. Note that the order or number of genes is not relevant, but they do have to be present in the genelist above.
+celltypes = list(c("Glut","Slc17a6"),c("Gaba1","Slc32a1","Arpp21"),c("Gaba2","Slc32a1","Npr3"),c("Gaba3","Slc32a1","Syt2"),c("Gaba4","Slc32a1","Erbb4"),c("Gaba5","Slc32a1","Kcnh1"),c("Chat1","Chat","Amigo2"),c("Chat2","Chat","Nes"),c("Chat3","Chat","Ctxn3"),c("ChatVgat","Chat","Slc32a1"),c("ChatVgatVglut","Chat","Slc32a1","Slc17a8"))
+celltypes_overlap = list(c("ChatVgat","ChatVgatVglut")) # Here we make explicit which cell types have memberships that are not exclusive, and thus can legitimately also belong to other cell types. They will not be excluded when checking for overlap.
+
+```
+
+```{r}
+#### PROCESSING
+
+# Process genelist, associate actual thresholds to each, check whether each cell in the dataset passes it, create a dataframe with True/False values for each gene (column) and cell (rows), check for co-expression (ie, cell types), get their coordinates. Note that we could have fewer for loops here, but breaking them apart makes it easier to identify what each one is doing. If you experience performance issues, consider merging some loops.
+
+
+insitugraph <- suppressWarnings(read_excel(basefilename))
+insitugraph <- as.data.frame(insitugraph)
+positivelist = c()
+wherelist = c()
+genestotest = c()
+
+for (i in 1:length(genelist)){j
+  positivelist[i] = genelist[[i]][1]
+  wherelist[i] = which(insitugraph[1]==genelist[[i]][1])
+  if (genelist[[i]][2] == 1){
+    genelist[[i]][2] = low_threshold
+    } else if (genelist[[i]][2] == 2) {
+    genelist[[i]][2] = medium_threshold
+    } else if (genelist[[i]][2] == 3) {
+    genelist[[i]][2] = high_threshold
+    }
+}
+
+dataframe = data.frame(matrix(0, ncol = length(positivelist), nrow = length(insitugraph))) 
+names(dataframe) = positivelist
+
+for (i in 1:length(positivelist)){
+ for (j in 2:length(insitugraph)-1){
+      if (insitugraph[[j]][wherelist[i]] >= as.numeric(genelist[[i]][2])){
+      dataframe[[i]][j]=1
+      } else {
+      dataframe[[i]][j]=0
+      }
+  }
+}
+
+for (i in 1:length(celltypes)){
+  celltypes[[i]][1] = celltypes[[i]][1]
+  genestotest = append(genestotest,list(celltypes[[i]][-1]))
+}
+
+dataframe_celltypes = data.frame(matrix(0, ncol = length(celltypes)+2, nrow = length(insitugraph))) # The reason for the "+2" is to make room for the coordinates, which will be added later
+celltypes_colnames = c()
+
+for (i in 1:length(celltypes)){
+  celltypes_colnames = append(celltypes_colnames,celltypes[[i]][1])
+  templocations = c()
+  for (j in 1:length(genestotest[[i]])){
+    templocations = append(templocations,grep(genestotest[[i]][j], names(dataframe))) # Find out where each gene is located in dataframe
+  }
+  is_positive = data.frame(matrix(0, ncol = length(templocations), nrow = length(insitugraph)))
+  for (j in 1:length(templocations)){
+    for (k in 1:length(insitugraph)){
+       if (dataframe[[templocations[j]]][k] == 1){  
+         is_positive[[j]][k] = 1 # If the cell is positive for that gene, assign it 1 on a temporary dataframe; it will perform as many checks as the number of genes for that cell type
+        }
+    }
+    for (j in 1:length(insitugraph)){
+       if (sum(is_positive[j,]) == length(is_positive[j,])){ # Check if all conditions are met on the temp dataframe, if so record that onto permanent dataframe
+         dataframe_celltypes[[i]][j] = 1
+       }
+    }
+  }
+}
+
+celltypes_colnames = append(celltypes_colnames,"coordx") 
+celltypes_colnames = append(celltypes_colnames,"coordy")
+names(dataframe_celltypes) = celltypes_colnames
+locationx = which(insitugraph=="Xcoord") 
+locationy = which(insitugraph=="Ycoord") 
+
+for (i in 1:length(dataframe_celltypes[[1]])){ # One final loop, this time to grab the coordinates for each cell, which will be needed for plotting
+   dataframe_celltypes[[length(dataframe_celltypes)-1]][i] = as.numeric(insitugraph[[i]][locationx])
+   dataframe_celltypes[[length(dataframe_celltypes)]][i] = as.numeric(insitugraph[[i]][locationy])
+}
+
+dataframe_celltypes = dataframe_celltypes[-1,] 
+dataframe_celltypes = dataframe_celltypes[-length(dataframe_celltypes[[1]]),] # Only necessary in edge cases where last entry is garbled, comment it out otherwise
+
+```
+  
+```{r}
+#### FILTERING
+
+# Now that we have a dataframe with information about the membership of each cell to a cell type, we need to deal with cases such as cells that do not belong to any cell type, or that meet the criteria for more than one cell type at once. Note that this is dependent on the thresholds set at the start.
+
+exceptions_location = c()
+exception_seq = seq(1,length(dataframe_celltypes)-2) 
+cellstoexclude = c()
+
+for (i in 1:length(celltypes_overlap[[1]])){
+  tempstring = celltypes_overlap[[1]][i]
+  templocation = which(colnames(dataframe_celltypes)==tempstring)
+  exception_seq = exception_seq[-which(exception_seq==templocation)]
+}
+
+for (i in 1:length(dataframe_celltypes[[1]])){
+  if (sum(as.numeric(dataframe_celltypes[i,exception_seq])) > 1 ){ 
+    cellstoexclude = append(cellstoexclude,i)
+  } else {
+    if (sum(as.numeric(dataframe_celltypes[i,exception_seq])) == 0){ 
+      cellstoexclude = append(cellstoexclude,i)
+    }
+  }
+}
+
+dataframe_celltypes = dataframe_celltypes[-cellstoexclude,]
+
+```
+
+```{r}
+#### PLOTTING
+
+# Plot the location of each cell within a cell type; plot the number of cells found for each cell type
+
+img = load.image(basefigure) 
+plotlist = c()
+proportionlist = data.frame(matrix(0, ncol = 3, nrow = length(dataframe_celltypes)-2))
+proportionlist[1] = colnames(dataframe_celltypes[1:(length(dataframe_celltypes)-2)])
+colnames(proportionlist) = c("Celltype","Number","Percentage")
+number_positive = length(subset(dataframe_celltypes,(rowSums(sign(dataframe_celltypes)>0)>0))[[1]])
+
+for (i in 1:(length(dataframe_celltypes)-2)){
+  tempname = colnames(dataframe_celltypes)[i]
+  proportionlist[[2]][i] = length((subset(dataframe_celltypes,(rowSums(sign(dataframe_celltypes[tempname])>0)>0))[,c(tempname,'coordx','coordy')][[1]]))
+  proportionlist[[3]][i] = length((subset(dataframe_celltypes,(rowSums(sign(dataframe_celltypes[tempname])>0)>0))[,c(tempname,'coordx','coordy')][[1]]))/number_positive*100
+  plotlist[[tempname]] <- ggplot(subset(dataframe_celltypes,(rowSums(sign(dataframe_celltypes[tempname])>0)>0))[,c(tempname,'coordx','coordy')], aes_string(x="coordx", y="coordy")) + theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line=element_blank(),axis.text.x=element_blank(),axis.text.y=element_blank(),axis.ticks=element_blank(), axis.title.x=element_blank(),axis.title.y=element_blank()) + geom_point(data=subset(dataframe_celltypes,(rowSums(sign(dataframe_celltypes[tempname])>0)>0))[,c(tempname,'coordx','coordy')], aes(x=coordx, y=coordy), fill="red", colour="red", shape=20, alpha=0.8) + xlim(dim(img)[2],0) + ylim(0,dim(img)[1]) + ggtitle(tempname) + theme(legend.position = "none") }
+
+ggplot(data=proportionlist,aes(x=Celltype, y=Number)) + geom_bar(stat="identity") + theme_minimal() 
+ggplot(data=proportionlist,aes(x="", y=Percentage,fill=Celltype)) + geom_bar(stat="identity", width=1, color="white")  + coord_polar("y", start=0) + theme_void()
+grid.arrange(grobs = plotlist)
+
+```
+
+```{r}
+# Plot a treemap representing cell type proportion
+
+group <- c("Glutamate","Gaba","Gaba","Gaba","Gaba","Gaba","Chat","Chat","Chat") # This you have to manually input, depending on the higher-order identity of the groups
+subgroup <- c("Glut","Gaba1","Gaba2","Gaba3","Gaba4","Gaba5","Chat1","Chat2","Chat3") # Here and below you also have to choose which cell types to plot
+value <- as.numeric(sapply(proportionlist[3],head,9))
+data <- data.frame(group,subgroup,value,clustercolors)
+
+treemap(data,
+            index=c("group","subgroup"),
+            vSize="value",
+            palette=clustercolors,
+            vColor="clustercolors",
+            type="color",
+            border.col=c("black","white"),
+            mirror.x='FALSE',
+            mirror.y='TRUE',
+            fontsize.labels=18,
+            drop.unused.levels = TRUE,
+            algorithm="squarified"
+            ) 
+```
+
+```
+
+```{r}
+#### SAVING
+
+# Save plots as images, save dataframes as .csv
+
+
+
+```
+
+

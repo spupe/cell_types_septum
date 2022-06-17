@@ -1,0 +1,124 @@
+---
+title: "Septum_IntegrateBatches"
+---
+##### Medial Septum sequencing project 
+##### Integrate two scRNA-seq experiments, filter, cluster, visualize, test them
+##### Script by Stefano Pupe
+
+```{r}
+# We need to filter and integrate the two separate experimental batches into one combined Seurat object. We will use Seurat's IntegrateData function, as it works well for minimizing batch effects. We also want to prepare our third dataset (spatial transcriptomics), which we will integrate and explore separately, later
+
+# This script needs count tables from our two separate experimental batches (scRNA-seq) and a count table from the spatial transcriptomics dataset (QIAGEN_AllWells.csv) to be present in the working dir
+
+library(Seurat)
+library(ggplot2)
+library(cowplot)
+
+setwd("A:/Science/SeptumPaper")
+
+# Create, filter and integrate seurat Objects
+
+sc1 <- read.csv('MS_Batch1_counts_curated.csv',sep=',', header=TRUE, row.names = 1) 
+seuratIntegrate1 <- CreateSeuratObject(counts=sc1,min.cells=3,min.features=2500) #filter for 2500 or more genes read/cell 
+batch1_neurons <- WhichCells(seuratIntegrate1,expression=Snap25>10) #filter for neurons only (with expression of Snap25, neuronal marker)
+seuratIntegrate1 <- subset(seuratIntegrate1,cells=batch1_neurons)
+batch1_hiqual <- WhichCells(seuratIntegrate1,expression=nCount_RNA>10000) #filter for low read number (10000 reads/cell)
+seuratIntegrate1 <- subset(seuratIntegrate1,cells=batch1_hiqual)
+
+sc2 <- read.csv('MS_Batch2_counts_curated.csv',sep=',', header=TRUE, row.names = 1) 
+seuratIntegrate2 <- CreateSeuratObject(counts=sc2,min.cells=3,min.features=2500)
+batch2_neurons <- WhichCells(seuratIntegrate2,expression=Snap25>10)  
+seuratIntegrate2 <- subset(seuratIntegrate2,cells=batch2_neurons)
+batch2_hiqual <- WhichCells(seuratIntegrate2,expression=nCount_RNA>10000) 
+seuratIntegrate2 <- subset(seuratIntegrate2,cells=batch2_hiqual)
+
+sc3 <- read.csv('QIAGEN_AllWells.csv',sep=',',header=TRUE, row.names = 1) 
+
+seuratIntegrate3 <- CreateSeuratObject(sc3,min.cells=3) #number of reads is drastically lower so we don't impose it here
+scFilter <- WhichCells(seuratIntegrate3,expression=Gfap<5)  #in this dataset we filter for markers of different types
+seuratIntegrate3 <- subset(seuratIntegrate3,cells=scFilter)
+scFilter <- WhichCells(seuratIntegrate3,expression=Cnp<5)
+seuratIntegrate3 <- subset(seuratIntegrate3,cells=scFilter)
+scFilter <- WhichCells(seuratIntegrate3,expression=Plp1<5)
+seuratIntegrate3 <- subset(seuratIntegrate3,cells=scFilter)
+
+seuratIntegrate1@meta.data$batch <- "Batch1"
+seuratIntegrate2@meta.data$batch <- "Batch2"
+seuratIntegrate3@meta.data$batch <- "Spatial"
+
+septum.list <- c(seuratIntegrate1,seuratIntegrate2,seuratIntegrate3)
+
+for (i in 1:length(x = septum.list)) {
+   
+    septum.list[[i]] <- NormalizeData(object = septum.list[[i]], verbose = FALSE,normalization.method="LogNormalize")
+    septum.list[[i]] <- FindVariableFeatures(object = septum.list[[i]], 
+        selection.method = "disp", nfeatures = 10000, verbose = FALSE)
+}
+
+# While we have prepared all 3 datasets, for now we only want to integrate the first two
+
+septum.anchors <- FindIntegrationAnchors(object.list = c(seuratIntegrate1,seuratIntegrate2), anchor.features=10000, dims = 1:20)
+septum.integrated <- IntegrateData(anchorset = septum.anchors, dims = 1:20) 
+DefaultAssay(object = septum.integrated) <- "integrated"
+
+```
+
+```{r}
+# Now that data is loaded, run the standard workflow for clustering and visualization
+
+clustercolors<-c("#91bfdb",  "#BCFFB2FF","#8AE67EFF", "#60CC52FF", "#3CB22DFF", "#1F990FFF", "#fc8d59", "#F4D166FF", "#F15A22") #these colors work well if workflow is untouched, but any parameter change can make them useless
+
+septum.integrated <- ScaleData(object = septum.integrated, verbose = FALSE)
+septum.integrated <- RunPCA(object = septum.integrated, npcs = 30, verbose = FALSE)
+septum.integrated <- RunUMAP(object = septum.integrated, reduction = "pca", 
+    dims = 1:30)
+septum.integrated <- RunTSNE(object = septum.integrated, reduction = "pca", 
+   dims = 1:30)
+septum.integrated <-FindNeighbors(object = septum.integrated, dims = 1:30, nn.method="rann")
+septum.integrated <-FindClusters(object = septum.integrated, verbose = FALSE,group.singletons=FALSE,n.start=100,n.iter=100,resolution=1.5)
+
+p1 <- DimPlot(object = septum.integrated, reduction = "umap", split.by = "batch",cols=clustercolors)
+p2 <- DimPlot(object = septum.integrated, reduction = "umap", group.by = "ident",cols=clustercolors, 
+    label = TRUE, repel = TRUE) + NoLegend()
+plot_grid(p1, p2)
+
+```
+
+```{r}
+# Build a cluster tree, showing the proximity among them, and reorder according to that so that similar clusters are ordered together
+
+septum.integrated<-BuildClusterTree(septum.integrated,features=c("Nrn1","Npr3","Meis2","Syt2","Erbb4","Rorb","Amigo2","Hspb8","Ctxn3"),reorder=TRUE)
+
+#With a standard run, the clusters will end up in a predictable order, so now we label and reorder them
+
+septum.integrated <- RenameIdents(septum.integrated,"6"="Chat1","0"="Chat2","2"="Chat3","7"="Glut","8"="Gaba1","3"="Gaba2","1"="Gaba3","4"="Gaba4","5"="Gaba5")
+levels(septum.integrated) <- c("Glut","Gaba1","Gaba2","Gaba3","Gaba4","Gaba5","Chat1","Chat2","Chat3")
+septum.integrated.abbreviated <- septum.integrated #this object is necessary to make prettier violin plots later
+septum.integrated.abbreviated <- RenameIdents(septum.integrated,"Chat1"="C1","Chat2"="C2","Chat3"="C3","Gaba1"="G1","Gaba2"="G2","Gaba3"="G3","Gaba4"="G4","Gaba5"="G5","Glut"="GL")
+levels(septum.integrated.abbreviated) <- c("GL","G1","G2","G3","G4","G5","C1","C2","C3")
+septum.integrated.heatmap <- septum.integrated #and this one is to make pretty heatmaps
+septum.integrated.heatmap <- RenameIdents(septum.integrated.heatmap,"Chat1"="7","Chat2"="8","Chat3"="9","Gaba1"="2","Gaba2"="3","Gaba3"="4","Gaba4"="5","Gaba5"="6","Glut"="1")
+
+PlotClusterTree(septum.integrated)
+VlnPlot(septum.integrated,c("Nrn1","Npr3","Arpp21","Syt2","Erbb4","Rorb","Amigo2","Hspb8","Ctxn3"),assay="RNA")
+
+```
+
+```{r}
+# Now let's go back to the spatial transcriptomics dataset, and integrate it with the other two in a separate object. There is no good, canonical way to integrate our spatial transcriptomics data (generated with a technique similar to SeqFish) with scRNA-seq data. For now, use IntegrateData and be aware of caveats
+
+septum.anchors <- FindIntegrationAnchors(object.list = septum.list, anchor.features=52, dims = 1:20)
+septum.integrated.spatial <- IntegrateData(anchorset = septum.anchors, dims = 1:20)
+DefaultAssay(object = septum.integrated.spatial) <- "integrated"
+septum.integrated.spatial <- ScaleData(object = septum.integrated.spatial, verbose = FALSE)
+septum.integrated.spatial <- RunPCA(object = septum.integrated.spatial, npcs = 20, verbose = FALSE)
+septum.integrated.spatial <- RunUMAP(object = septum.integrated.spatial, reduction = "pca", dims = 1:20)
+septum.integrated.spatial <-FindNeighbors(object = septum.integrated.spatial, dims = 1:20, nn.method="rann")
+septum.integrated.spatial <-FindClusters(object = septum.integrated.spatial, verbose = FALSE,group.singletons=FALSE,n.start=100,n.iter=100,resolution=1.2)
+p1 <- DimPlot(object = septum.integrated.spatial, reduction = "umap", split.by = "batch")
+p2 <- DimPlot(object = septum.integrated.spatial, reduction = "umap", group.by = "ident", 
+    label = TRUE, repel = TRUE) + NoLegend()
+plot_grid(p1, p2)
+
+```
+
